@@ -40,6 +40,7 @@ import {
   resolveTelegramStreamMode,
 } from "./bot/helpers.js";
 import { resolveTelegramFetch } from "./fetch.js";
+import { wrapWithTelegramHook } from "./telegram-hook.js";
 import { createTelegramSendChatActionHandler } from "./sendchataction-401-backoff.js";
 
 export type TelegramBotOptions = {
@@ -419,7 +420,7 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     resolveGroupPolicy,
     resolveTelegramGroupConfig,
     shouldSkipUpdate,
-    processMessage,
+    processMessage: wrapWithTelegramHook(processMessage),
     logger,
   });
 
