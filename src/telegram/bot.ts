@@ -40,6 +40,8 @@ import {
   resolveTelegramStreamMode,
 } from "./bot/helpers.js";
 import { resolveTelegramFetch } from "./fetch.js";
+import { wasSentByBot } from "./sent-message-cache.js";
+import { wrapWithTelegramHook } from "./telegram-hook.js";
 
 export type TelegramBotOptions = {
   token: string;
@@ -370,7 +372,7 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     resolveGroupPolicy,
     resolveTelegramGroupConfig,
     shouldSkipUpdate,
-    processMessage,
+    processMessage: wrapWithTelegramHook(processMessage),
     logger,
   });
 
