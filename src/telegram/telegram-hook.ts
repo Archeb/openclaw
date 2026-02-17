@@ -20,9 +20,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { logVerbose } from "../globals.js";
-import type { TelegramContext } from "./bot/types.js";
 import type { TelegramMediaRef } from "./bot-message-context.js";
+import type { TelegramContext } from "./bot/types.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
+
+const logger = createSubsystemLogger("telegram-hook");
 
 export type ProcessMessageFn = (
   primaryCtx: TelegramContext,
@@ -37,6 +39,7 @@ export type TelegramHookArgs = {
   storeAllowFrom: string[];
   options?: { messageIdOverride?: string; forceWasMentioned?: boolean };
   processMessage: ProcessMessageFn;
+  log: (message: string) => void;
 };
 
 export type TelegramHookModule = {
@@ -62,28 +65,30 @@ export function wrapWithTelegramHook(original: ProcessMessageFn): ProcessMessage
   let hook: TelegramHookModule | null = null;
 
   const loadHook = async (): Promise<TelegramHookModule | null> => {
-    if (resolved) return hook;
+    if (resolved) {
+      return hook;
+    }
     resolved = true;
 
     const hookPath = resolveHookPath();
     if (!fs.existsSync(hookPath)) {
-      logVerbose("telegram-hook: no hook file found, using default processing");
+      logger.info("telegram-hook: no hook file found, using default processing");
       return null;
     }
 
     try {
       const mod = (await import(hookPath)) as TelegramHookModule;
       if (typeof mod.onInboundMessage !== "function") {
-        logVerbose(
+        logger.warn(
           `telegram-hook: hook at ${hookPath} does not export onInboundMessage, skipping`,
         );
         return null;
       }
-      logVerbose(`telegram-hook: loaded hook from ${hookPath}`);
+      logger.info(`telegram-hook: loaded hook from ${hookPath}`);
       hook = mod;
       return hook;
     } catch (err) {
-      logVerbose(`telegram-hook: failed to load hook from ${hookPath}: ${String(err)}`);
+      logger.error(`telegram-hook: failed to load hook from ${hookPath}: ${String(err)}`);
       return null;
     }
   };
@@ -100,6 +105,7 @@ export function wrapWithTelegramHook(original: ProcessMessageFn): ProcessMessage
       storeAllowFrom,
       options,
       processMessage: original,
+      log: (message: string) => logger.info(message),
     });
   };
 }
