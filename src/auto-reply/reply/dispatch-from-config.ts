@@ -1,3 +1,7 @@
+import type { OpenClawConfig } from "../../config/config.js";
+import type { FinalizedMsgContext } from "../templating.js";
+import type { GetReplyOptions, ReplyPayload } from "../types.js";
+import type { ReplyDispatcher, ReplyDispatchKind } from "./reply-dispatcher.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { loadSessionStore, resolveStorePath, type SessionEntry } from "../../config/sessions.js";
@@ -14,8 +18,6 @@ import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { maybeApplyTtsToPayload, normalizeTtsAutoMode, resolveTtsConfig } from "../../tts/tts.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import { getReplyFromConfig } from "../reply.js";
-import type { FinalizedMsgContext } from "../templating.js";
-import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { formatAbortReplyText, tryFastAbortFromMessage } from "./abort.js";
 import { shouldBypassAcpDispatchForCommand, tryDispatchAcpReply } from "./dispatch-acp.js";
 import { shouldSkipDuplicateInbound } from "./inbound-dedupe.js";
@@ -23,6 +25,7 @@ import type { ReplyDispatcher, ReplyDispatchKind } from "./reply-dispatcher.js";
 import { shouldSuppressReasoningPayload } from "./reply-payloads.js";
 import { isRoutableChannel, routeReply } from "./route-reply.js";
 import { resolveRunTypingPolicy } from "./typing-policy.js";
+import { applyMessageSplitting } from "./split-payloads.js";
 
 const AUDIO_PLACEHOLDER_RE = /^<media:audio>(\s*\([^)]*\))?$/i;
 const AUDIO_HEADER_RE = /^\[Audio\b/i;
@@ -467,7 +470,14 @@ export async function dispatchReplyFromConfig(params: {
       cfg,
     );
 
-    const replies = replyResult ? (Array.isArray(replyResult) ? replyResult : [replyResult]) : [];
+    const rawReplies = replyResult
+      ? Array.isArray(replyResult)
+        ? replyResult
+        : [replyResult]
+      : [];
+
+    let replies: ReplyPayload[] = rawReplies;
+    replies = applyMessageSplitting(replies, cfg);
 
     let queuedFinal = false;
     let routedFinalCount = 0;
