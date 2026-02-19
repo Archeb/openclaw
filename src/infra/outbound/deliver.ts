@@ -1,38 +1,39 @@
+import type { ReplyPayload } from "../../auto-reply/types.js";
+import type {
+  ChannelOutboundAdapter,
+  ChannelOutboundContext,
+} from "../../channels/plugins/types.js";
+import type { OpenClawConfig } from "../../config/config.js";
+import type { sendMessageDiscord } from "../../discord/send.js";
+import type { sendMessageIMessage } from "../../imessage/send.js";
+import type { sendMessageSlack } from "../../slack/send.js";
+import type { sendMessageTelegram } from "../../telegram/send.js";
+import type { sendMessageWhatsApp } from "../../web/outbound.js";
+import type { OutboundIdentity } from "./identity.js";
+import type { NormalizedOutboundPayload } from "./payloads.js";
+import type { OutboundChannel } from "./targets.js";
 import {
   chunkByParagraph,
   chunkMarkdownTextWithMode,
   resolveChunkMode,
   resolveTextChunkLimit,
 } from "../../auto-reply/chunk.js";
-import type { ReplyPayload } from "../../auto-reply/types.js";
+import { applyMessageSplitting } from "../../auto-reply/reply/split-payloads.js";
 import { resolveChannelMediaMaxBytes } from "../../channels/plugins/media-limits.js";
 import { loadChannelOutboundAdapter } from "../../channels/plugins/outbound/load.js";
-import type {
-  ChannelOutboundAdapter,
-  ChannelOutboundContext,
-} from "../../channels/plugins/types.js";
-import type { OpenClawConfig } from "../../config/config.js";
 import { resolveMarkdownTableMode } from "../../config/markdown-tables.js";
 import {
   appendAssistantMessageToSessionTranscript,
   resolveMirroredTranscriptText,
 } from "../../config/sessions.js";
-import type { sendMessageDiscord } from "../../discord/send.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
-import type { sendMessageIMessage } from "../../imessage/send.js";
 import { getAgentScopedMediaLocalRoots } from "../../media/local-roots.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { markdownToSignalTextChunks, type SignalTextStyleRange } from "../../signal/format.js";
 import { sendMessageSignal } from "../../signal/send.js";
-import type { sendMessageSlack } from "../../slack/send.js";
-import type { sendMessageTelegram } from "../../telegram/send.js";
-import type { sendMessageWhatsApp } from "../../web/outbound.js";
 import { throwIfAborted } from "./abort.js";
 import { ackDelivery, enqueueDelivery, failDelivery } from "./delivery-queue.js";
-import type { OutboundIdentity } from "./identity.js";
-import type { NormalizedOutboundPayload } from "./payloads.js";
 import { normalizeReplyPayloadsForDelivery } from "./payloads.js";
-import type { OutboundChannel } from "./targets.js";
 
 export type { NormalizedOutboundPayload } from "./payloads.js";
 export { normalizeOutboundPayloads } from "./payloads.js";
@@ -226,7 +227,8 @@ type DeliverOutboundPayloadsParams = DeliverOutboundPayloadsCoreParams & {
 export async function deliverOutboundPayloads(
   params: DeliverOutboundPayloadsParams,
 ): Promise<OutboundDeliveryResult[]> {
-  const { channel, to, payloads } = params;
+  const { channel, to } = params;
+  const payloads = applyMessageSplitting(params.payloads, params.cfg);
 
   // Write-ahead delivery queue: persist before sending, remove after success.
   const queueId = params.skipQueue
@@ -252,12 +254,13 @@ export async function deliverOutboundPayloads(
   const wrappedParams = params.onError
     ? {
         ...params,
+        payloads,
         onError: (err: unknown, payload: NormalizedOutboundPayload) => {
           hadPartialFailure = true;
           params.onError!(err, payload);
         },
       }
-    : params;
+    : { ...params, payloads };
 
   try {
     const results = await deliverOutboundPayloadsCore(wrappedParams);

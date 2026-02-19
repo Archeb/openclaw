@@ -116,6 +116,17 @@ export const MessagesSchema = z
     removeAckAfterReply: z.boolean().optional(),
     suppressToolErrors: z.boolean().optional(),
     tts: TtsConfigSchema,
+    splitLongMessages: z
+      .union([
+        z.boolean(),
+        z
+          .object({
+            maxLines: z.number().int().positive().optional(),
+            maxParagraphs: z.number().int().positive().optional(),
+          })
+          .strict(),
+      ])
+      .optional(),
   })
   .strict()
   .optional();

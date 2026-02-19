@@ -86,6 +86,20 @@ export type MessagesConfig = {
   suppressToolErrors?: boolean;
   /** Text-to-speech settings for outbound replies. */
   tts?: TtsConfig;
+  /**
+   * Automatically split long messages into multiple shorter ones.
+   * - false: disable splitting (default)
+   * - true: enable splitting with default settings (approx 4 paragraphs or 20 lines)
+   * - object: customize splitting behavior
+   */
+  splitLongMessages?: boolean | SplitLongMessagesConfig;
+};
+
+export type SplitLongMessagesConfig = {
+  /** Target line count to split at (soft limit). Default: 20. */
+  maxLines?: number;
+  /** Target paragraph count to split at (soft limit). Default: 4. */
+  maxParagraphs?: number;
 };
 
 export type NativeCommandsSetting = boolean | "auto";
