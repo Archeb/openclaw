@@ -1,4 +1,10 @@
 import type { Bot } from "grammy";
+import type { OpenClawConfig, ReplyToMode, TelegramAccountConfig } from "../config/types.js";
+import type { RuntimeEnv } from "../runtime.js";
+import type { TelegramMessageContext } from "./bot-message-context.js";
+import type { TelegramBotOptions } from "./bot.js";
+import type { TelegramStreamMode } from "./bot/types.js";
+import type { TelegramInlineButtons } from "./button-types.js";
 import { resolveAgentDir } from "../agents/agent-scope.js";
 import {
   findModelInCatalog,
@@ -15,15 +21,9 @@ import { logAckFailure, logTypingFailure } from "../channels/logging.js";
 import { createReplyPrefixOptions } from "../channels/reply-prefix.js";
 import { createTypingCallbacks } from "../channels/typing.js";
 import { resolveMarkdownTableMode } from "../config/markdown-tables.js";
-import type { OpenClawConfig, ReplyToMode, TelegramAccountConfig } from "../config/types.js";
 import { danger, logVerbose } from "../globals.js";
 import { getAgentScopedMediaLocalRoots } from "../media/local-roots.js";
-import type { RuntimeEnv } from "../runtime.js";
-import type { TelegramMessageContext } from "./bot-message-context.js";
-import type { TelegramBotOptions } from "./bot.js";
 import { deliverReplies } from "./bot/delivery.js";
-import type { TelegramStreamMode } from "./bot/types.js";
-import type { TelegramInlineButtons } from "./button-types.js";
 import { resolveTelegramDraftStreamingChunking } from "./draft-chunking.js";
 import { createTelegramDraftStream } from "./draft-stream.js";
 import { editMessageTelegram } from "./send.js";
@@ -119,6 +119,8 @@ export const dispatchTelegramMessage = async ({
   let lastPartialText = "";
   let draftText = "";
   let hasStreamedMessage = false;
+  const historicPreviewMessageIds: number[] = [];
+  const editedPreviewIds = new Set<number>();
   const updateDraftFromPartial = (text?: string) => {
     if (!draftStream || !text) {
       return;
@@ -270,7 +272,7 @@ export const dispatchTelegramMessage = async ({
     delivered: false,
     skippedNonSilent: 0,
   };
-  let finalizedViaPreviewMessage = false;
+  let hasErrorPayload = false;
   const clearGroupHistory = () => {
     if (isGroup && historyKey) {
       clearHistoryEntriesIfEnabled({ historyMap: groupHistories, historyKey, limit: historyLimit });
@@ -299,10 +301,23 @@ export const dispatchTelegramMessage = async ({
       dispatcherOptions: {
         ...prefixOptions,
         deliver: async (payload, info) => {
+          if (payload.isError) {
+            hasErrorPayload = true;
+          }
           if (info.kind === "final") {
             await flushDraft();
             const hasMedia = Boolean(payload.mediaUrl) || (payload.mediaUrls?.length ?? 0) > 0;
-            const previewMessageId = draftStream?.messageId();
+
+            let previewMessageId: number | undefined;
+            if (historicPreviewMessageIds.length > 0) {
+              previewMessageId = historicPreviewMessageIds.shift();
+            } else {
+              const currentId = draftStream?.messageId();
+              if (currentId !== undefined && !editedPreviewIds.has(currentId)) {
+                previewMessageId = currentId;
+              }
+            }
+
             const finalText = payload.text;
             const currentPreviewText = streamMode === "block" ? draftText : lastPartialText;
             const previewButtons = (
@@ -311,14 +326,13 @@ export const dispatchTelegramMessage = async ({
             let draftStoppedForPreviewEdit = false;
             // Skip preview edit for error payloads to avoid overwriting previous content
             const canFinalizeViaPreviewEdit =
-              !finalizedViaPreviewMessage &&
               !hasMedia &&
               typeof finalText === "string" &&
               finalText.length > 0 &&
               typeof previewMessageId === "number" &&
               finalText.length <= draftMaxChars &&
               !payload.isError;
-            if (canFinalizeViaPreviewEdit) {
+            if (canFinalizeViaPreviewEdit && previewMessageId !== undefined) {
               await draftStream?.stop();
               draftStoppedForPreviewEdit = true;
               if (
@@ -338,7 +352,7 @@ export const dispatchTelegramMessage = async ({
                   linkPreview: telegramCfg.linkPreview,
                   buttons: previewButtons,
                 });
-                finalizedViaPreviewMessage = true;
+                editedPreviewIds.add(previewMessageId);
                 deliveryState.delivered = true;
                 return;
               } catch (err) {
@@ -361,11 +375,17 @@ export const dispatchTelegramMessage = async ({
               await draftStream?.stop();
             }
             // Check if stop() sent a message (debounce released on isFinal)
-            // If so, edit that message instead of sending a new one
-            const messageIdAfterStop = draftStream?.messageId();
+            let fallbackPreviewMessageId = previewMessageId;
+            if (fallbackPreviewMessageId === undefined && historicPreviewMessageIds.length === 0) {
+              const newCurrentId = draftStream?.messageId();
+              if (newCurrentId !== undefined && !editedPreviewIds.has(newCurrentId)) {
+                fallbackPreviewMessageId = newCurrentId;
+              }
+            }
+
             if (
-              !finalizedViaPreviewMessage &&
-              typeof messageIdAfterStop === "number" &&
+              typeof fallbackPreviewMessageId === "number" &&
+              !editedPreviewIds.has(fallbackPreviewMessageId) &&
               typeof finalText === "string" &&
               finalText.length > 0 &&
               finalText.length <= draftMaxChars &&
@@ -373,14 +393,14 @@ export const dispatchTelegramMessage = async ({
               !payload.isError
             ) {
               try {
-                await editMessageTelegram(chatId, messageIdAfterStop, finalText, {
+                await editMessageTelegram(chatId, fallbackPreviewMessageId, finalText, {
                   api: bot.api,
                   cfg,
                   accountId: route.accountId,
                   linkPreview: telegramCfg.linkPreview,
                   buttons: previewButtons,
                 });
-                finalizedViaPreviewMessage = true;
+                editedPreviewIds.add(fallbackPreviewMessageId);
                 deliveryState.delivered = true;
                 return;
               } catch (err) {
@@ -397,6 +417,23 @@ export const dispatchTelegramMessage = async ({
           });
           if (result.delivered) {
             deliveryState.delivered = true;
+            // Best-effort cleanup of orphaned preview message since replacement was sent successfully
+            const orphanedId =
+              info.kind === "final"
+                ? (historicPreviewMessageIds.shift() ?? draftStream?.messageId())
+                : undefined;
+            if (
+              typeof orphanedId === "number" &&
+              !editedPreviewIds.has(orphanedId) &&
+              !payload.isError
+            ) {
+              try {
+                await bot.api.deleteMessage(chatId, orphanedId);
+                editedPreviewIds.add(orphanedId);
+              } catch (e) {
+                logVerbose(`telegram: failed to delete orphaned preview message: ${String(e)}`);
+              }
+            }
           }
         },
         onSkip: (_payload, info) => {
@@ -432,6 +469,10 @@ export const dispatchTelegramMessage = async ({
               );
               if (shouldSplitPreviewMessages && hasStreamedMessage) {
                 logVerbose(`telegram: calling forceNewMessage()`);
+                const prevId = draftStream.messageId();
+                if (typeof prevId === "number") {
+                  historicPreviewMessageIds.push(prevId);
+                }
                 draftStream.forceNewMessage();
               }
               lastPartialText = "";
@@ -443,6 +484,10 @@ export const dispatchTelegramMessage = async ({
           ? () => {
               // Same policy as assistant-message boundaries: split only in block mode.
               if (shouldSplitPreviewMessages && hasStreamedMessage) {
+                const prevId = draftStream.messageId();
+                if (typeof prevId === "number") {
+                  historicPreviewMessageIds.push(prevId);
+                }
                 draftStream.forceNewMessage();
               }
               lastPartialText = "";
@@ -456,8 +501,13 @@ export const dispatchTelegramMessage = async ({
   } finally {
     // Must stop() first to flush debounced content before clear() wipes state
     await draftStream?.stop();
-    if (!finalizedViaPreviewMessage) {
-      await draftStream?.clear();
+    const finalActiveId = draftStream?.messageId();
+    const isEdited = typeof finalActiveId === "number" && editedPreviewIds.has(finalActiveId);
+    if (!isEdited) {
+      // Only clear the active draft if we haven't already edited/deleted it
+      if ((deliveryState.delivered && !hasErrorPayload) || !hasStreamedMessage) {
+        await draftStream?.clear();
+      }
     }
   }
   let sentFallback = false;
