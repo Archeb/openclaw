@@ -13,6 +13,8 @@ export type TelegramDraftStream = {
   stop: () => Promise<void>;
   /** Reset internal state so the next update creates a new message instead of editing. */
   forceNewMessage: () => void;
+  /** Bypasses any initial length debouncing and immediately flushes pending text to Telegram. */
+  bypassDebounce: () => Promise<void>;
 };
 
 export function createTelegramDraftStream(params: {
@@ -32,7 +34,7 @@ export function createTelegramDraftStream(params: {
     TELEGRAM_STREAM_MAX_CHARS,
   );
   const throttleMs = Math.max(250, params.throttleMs ?? DEFAULT_THROTTLE_MS);
-  const minInitialChars = params.minInitialChars;
+  let minInitialChars = params.minInitialChars;
   const chatId = params.chatId;
   const threadParams = buildTelegramThreadParams(params.thread);
   const replyParams =
@@ -140,6 +142,11 @@ export function createTelegramDraftStream(params: {
     loop.resetPending();
   };
 
+  const bypassDebounce = async () => {
+    minInitialChars = undefined;
+    await loop.flush();
+  };
+
   params.log?.(`telegram stream preview ready (maxChars=${maxChars}, throttleMs=${throttleMs})`);
 
   return {
@@ -149,5 +156,6 @@ export function createTelegramDraftStream(params: {
     clear,
     stop,
     forceNewMessage,
+    bypassDebounce,
   };
 }

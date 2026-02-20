@@ -460,6 +460,12 @@ export const dispatchTelegramMessage = async ({
         skillFilter,
         disableBlockStreaming,
         onPartialReply: draftStream ? (payload) => updateDraftFromPartial(payload.text) : undefined,
+        onToolStart: draftStream
+          ? async () => {
+              logVerbose("telegram: tool started, bypassing draft debounce");
+              await draftStream.bypassDebounce();
+            }
+          : undefined,
         onAssistantMessageStart: draftStream
           ? () => {
               // Only split preview bubbles in block mode. In partial mode, keep
