@@ -11,6 +11,7 @@ import type { sendMessageTelegram } from "../../telegram/send.js";
 import type { sendMessageWhatsApp } from "../../web/outbound.js";
 import type { OutboundIdentity } from "./identity.js";
 import type { NormalizedOutboundPayload } from "./payloads.js";
+import type { OutboundSessionContext } from "./session-context.js";
 import type { OutboundChannel } from "./targets.js";
 import {
   chunkByParagraph,
@@ -27,7 +28,6 @@ import {
   resolveMirroredTranscriptText,
 } from "../../config/sessions.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
-import type { sendMessageIMessage } from "../../imessage/send.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { getAgentScopedMediaLocalRoots } from "../../media/local-roots.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
@@ -36,8 +36,6 @@ import { sendMessageSignal } from "../../signal/send.js";
 import { throwIfAborted } from "./abort.js";
 import { ackDelivery, enqueueDelivery, failDelivery } from "./delivery-queue.js";
 import { normalizeReplyPayloadsForDelivery } from "./payloads.js";
-import type { OutboundSessionContext } from "./session-context.js";
-import type { OutboundChannel } from "./targets.js";
 
 export type { NormalizedOutboundPayload } from "./payloads.js";
 export { normalizeOutboundPayloads } from "./payloads.js";
